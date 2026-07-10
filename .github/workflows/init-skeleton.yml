@@ -1,0 +1,369 @@
+name: Init skeleton
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create branch and files
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = 'init-skeleton';
+
+            // get default branch sha
+            const { data: repoData } = await github.rest.repos.get({ owner, repo });
+            const defaultBranch = repoData.default_branch;
+            const { data: refData } = await github.rest.git.getRef({ owner, repo, ref: `heads/${defaultBranch}` });
+            const sha = refData.object.sha;
+
+            // create branch if not exists
+            try {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha });
+              console.log('Branch created:', branch);
+            } catch (e) {
+              if (e.status === 422) {
+                console.log('Branch already exists:', branch);
+              } else {
+                throw e;
+              }
+            }
+
+            // helper to create or update a file in branch
+            async function createOrUpdate(path, contentText, message) {
+              const content = Buffer.from(contentText).toString('base64');
+              try {
+                await github.rest.repos.createOrUpdateFileContents({
+                  owner, repo, path,
+                  message,
+                  content,
+                  branch,
+                });
+                console.log('Created', path);
+              } catch (err) {
+                if (err.status === 422 || err.status === 409) {
+                  // file exists — update
+                  const existing = await github.rest.repos.getContent({ owner, repo, path, ref: branch });
+                  await github.rest.repos.createOrUpdateFileContents({
+                    owner, repo, path,
+                    message: message + ' (update)',
+                    content,
+                    branch,
+                    sha: existing.data.sha
+                  });
+                  console.log('Updated', path);
+                } else {
+                  throw err;
+                }
+              }
+            }
+
+            // Files to create (shortened, can be extended)
+            const files = {
+              'README.md': `# music-client
+
+Этот репозиторий содержит начальный скелет Android‑клиента для платформы личных треков и минимальные инструкции для загрузки треков напрямую в репозиторий через GitHub API.
+
+Коротко:
+- Хранение аудио: Git LFS (рекомендуется). GitHub запрещает файлы >100MB.
+- Загрузка: из приложения напрямую в репозиторий через GitHub API (Personal Access Token / OAuth token) или через Actions. Нет отдельного сервера.
+- В приложении используется одна ветка для треков: \"tracks\" (все загрузки идут туда). Платформенные (твои) треки помещаются в owner/, пользовательские в users/<username>/.
+
+Лицензия: MIT
+`,
+              '.gitattributes': `*.mp3 filter=lfs diff=lfs merge=lfs -text
+*.wav filter=lfs diff=lfs merge=lfs -text
+`,
+              '.lfsconfig': `[lfs]
+\turl = https://github.com/${owner}/${repo}.git/info/lfs
+`,
+              '.gitignore': `# Gradle caches
+.gradle/
+build/
+**/build/
+
+# Android Studio
+.idea/
+*.iml
+
+# Local properties
+local.properties
+
+# Keystore
+*.jks
+
+# Other
+*.log
+`,
+              '.github/workflows/android-ci.yml': `name: Android CI
+
+on:
+  push:
+    branches: [ main, init-skeleton ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build Debug
+        run: |
+          cd android-client
+          ./gradlew assembleDebug --no-daemon
+`,
+              'android-client/settings.gradle': `rootProject.name = "music-client"
+include ":app"
+`,
+              'android-client/build.gradle': `// Top-level build file where you can add configuration options common to all sub-projects/modules.
+buildscript {
+    ext.kotlin_version = '1.9.10'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:8.1.0"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+`,
+              'android-client/app/build.gradle': `apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+android {
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.winshop.musicclient"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "0.1"
+
+        vectorDrawables.useSupportLibrary = true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    buildFeatures {
+        compose true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = '1.5.3'
+    }
+}
+`,
+              'android-client/app/src/main/AndroidManifest.xml': `<?xml version="1.0" encoding="utf-8"?>
+<manifest package="com.winshop.musicclient"
+    xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="true"
+        android:label="music-client"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round">
+
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service android:name=".player.PlayerService" android:exported="false" />
+
+    </application>
+</manifest>
+`,
+              'android-client/app/src/main/java/com/winshop/musicclient/MainActivity.kt': `package com.winshop.musicclient
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.Button
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Surface
+import androidx.compose.material.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.viewmodel.compose.viewModel
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            MaterialTheme {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    AppScreen()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AppScreen(vm: MainViewModel = viewModel()) {
+    Column {
+        Text("Music Client (skeleton)")
+        Button(onClick = { vm.loadTracksFromGitHub() }) {
+            Text("Refresh tracks from GitHub")
+        }
+    }
+}
+`,
+              'android-client/app/src/main/java/com/winshop/musicclient/player/PlayerService.kt': `package com.winshop.musicclient.player
+
+import android.app.Service
+import android.content.Intent
+import android.os.IBinder
+import com.google.android.exoplayer2.SimpleExoPlayer
+
+class PlayerService : Service() {
+    private var player: SimpleExoPlayer? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        player = SimpleExoPlayer.Builder(this).build()
+    }
+
+    override fun onDestroy() {
+        player?.release()
+        player = null
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+`,
+              'android-client/app/src/main/java/com/winshop/musicclient/data/Track.kt': `package com.winshop.musicclient.data
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "tracks")
+data class Track(
+    @PrimaryKey val id: String,
+    val title: String,
+    val artist: String,
+    val pathInRepo: String,
+    val ownerTrack: Boolean = false
+)
+`,
+              'android-client/app/src/main/java/com/winshop/musicclient/MainViewModel.kt': `package com.winshop.musicclient
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.winshop.musicclient.data.Track
+import com.winshop.musicclient.data.TrackDatabase
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
+class MainViewModel : ViewModel() {
+    fun loadTracksFromGitHub() {
+        viewModelScope.launch(Dispatchers.IO) {
+            // TODO: implement GitHub listing of tracks (calls GitHub API to read "tracks" branch)
+        }
+    }
+
+    fun saveTracksToDb(db: TrackDatabase, items: List<Track>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            db.trackDao().insertAll(items)
+        }
+    }
+}
+`,
+              'android-client/app/src/main/java/com/winshop/musicclient/github/GitHubUploader.kt': `package com.winshop.musicclient.github
+
+import android.util.Base64
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import java.io.File
+
+/**
+ * Minimal GitHub uploader using the Contents API.
+ * Usage: create instance with token and call uploadFile(pathInRepo, file, commitMessage, branch)
+ * NOTE: This is a simple implementation. For large binary files (>100MB) use Git LFS or a server.
+ */
+class GitHubUploader(private val owner: String, private val repo: String, private val token: String) {
+    private val client = OkHttpClient()
+
+    fun uploadFile(pathInRepo: String, file: File, commitMessage: String, branch: String = "tracks"): Boolean {
+        val bytes = file.readBytes()
+        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+        val json = JSONObject().apply {
+            put("message", commitMessage)
+            put("branch", branch)
+            put("content", base64)
+        }
+
+        val mediaType = "application/json; charset=utf-8".toMediaType()
+        val body: RequestBody = json.toString().toRequestBody(mediaType)
+
+        val url = "https://api.github.com/repos/${owner}/${repo}/contents/${pathInRepo}"
+        val req = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "token ${token}")
+            .addHeader("Accept", "application/vnd.github+json")
+            .put(body)
+            .build()
+
+        client.newCall(req).execute().use { resp ->
+            return resp.isSuccessful
+        }
+    }
+}
+`
+            };
+
+            for (const [path, text] of Object.entries(files)) {
+              await createOrUpdate(path, text, 'Init: add ' + path);
+            }
+
+            console.log('All files created/updated in branch', branch);

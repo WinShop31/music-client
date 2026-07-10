@@ -10,146 +10,112 @@ jobs:
   init:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout using PAT
         uses: actions/checkout@v4
         with:
-          ref: main
-          persist-credentials: true
+          token: ${{ secrets.SKELETON_PAT }}
+          fetch-depth: 0
 
       - name: Configure git user
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "skeleton-bot"
+          git config user.email "skeleton-bot@users.noreply.github.com"
 
-      - name: Create branch and add skeleton files
+      - name: Create branch and add files
+        env:
+          BRANCH: init-skeleton
+          REPO: ${{ github.repository }}
         run: |
           set -e
-          BRANCH="init-skeleton"
-          # Create or reset branch locally based on main
-          git fetch origin main:refs/remotes/origin/main
+
+          # fetch main (if exists)
+          git fetch origin main:refs/remotes/origin/main || true
+
+          # create/reset branch from origin/main (or from current HEAD)
           if git show-ref --verify --quiet refs/heads/$BRANCH; then
             git branch -D $BRANCH || true
           fi
-          git checkout -b $BRANCH origin/main
+          if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+            git checkout -b $BRANCH origin/main || git checkout -b $BRANCH
+          else
+            git checkout -b $BRANCH
+          fi
 
           # README
-          cat > README.md <<'EOF'
+          cat > README.md <<'README'
 # music-client
 
 Этот репозиторий содержит начальный скелет Android‑клиента для платформы личных треков и минимальные инструкции для загрузки треков напрямую в репозиторий через GitHub API.
 
 Коротко:
 - Хранение аудио: Git LFS (рекомендуется). GitHub запрещает файлы >100MB.
-- Загрузка: из приложения напрямую в репозиторий через GitHub API (Personal Access Token / OAuth token). Нет отдельного сервера.
-- В приложении используется одна ветка для треков: "tracks" (все загрузки идут туда). Платформенные (твои) треки помещаются в owner/, пользовательские в users/<username>/.
+- Загрузка: из приложения напрямую в репозиторий через GitHub API (Personal Access Token / OAuth token).
+- В приложении используется одна ветка для треков: "tracks".
 
 Лицензия: MIT
-EOF
+README
 
           # .gitattributes
-          cat > .gitattributes <<'EOF'
+          cat > .gitattributes <<'ATTR'
 *.mp3 filter=lfs diff=lfs merge=lfs -text
 *.wav filter=lfs diff=lfs merge=lfs -text
-EOF
+ATTR
 
-          # .lfsconfig (uses GITHUB_REPOSITORY env during run)
-          cat > .lfsconfig <<EOF
+          # .lfsconfig (uses repo env)
+          cat > .lfsconfig <<LFS
 [lfs]
-	url = https://github.com/${GITHUB_REPOSITORY}.git/info/lfs
-EOF
+    url = https://github.com/${REPO}.git/info/lfs
+LFS
 
           # .gitignore
-          cat > .gitignore <<'EOF'
-# Gradle caches
+          cat > .gitignore <<'GITIGNORE'
 .gradle/
 build/
 **/build/
-
-# Android Studio
 .idea/
 *.iml
-
-# Local properties
 local.properties
-
-# Keystore
 *.jks
-
-# Other
 *.log
-EOF
+GITIGNORE
 
-          # Minimal Android CI workflow (separate file)
+          # Minimal android CI workflow
           mkdir -p .github/workflows
-          cat > .github/workflows/android-ci.yml <<'EOF'
+          cat > .github/workflows/android-ci.yml <<'CI'
 name: Android CI
 
 on:
   push:
     branches: [ main, init-skeleton ]
-  pull_request:
-    branches: [ main ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-
-      - name: Build Debug (if android-client exists)
+      - name: Build (if android-client present)
         run: |
           if [ -d android-client ] && [ -f android-client/gradlew ]; then
             cd android-client
             ./gradlew assembleDebug --no-daemon
           else
-            echo "android-client not present yet; nothing to build."
+            echo "No android-client found."
           fi
-EOF
+CI
 
-          # Minimal android-client skeleton (short files to avoid huge payloads)
-          mkdir -p android-client/app/src/main/java/com/winshop/musicclient/player
-          mkdir -p android-client/app/src/main/java/com/winshop/musicclient/data
-          mkdir -p android-client/app/src/main/res
-
-          cat > android-client/settings.gradle <<'EOF'
+          # Minimal android-client skeleton (small files)
+          mkdir -p android-client/app/src/main/java/com/winshop/musicclient
+          cat > android-client/settings.gradle <<'SETTINGS'
 rootProject.name = "music-client"
 include ":app"
-EOF
+SETTINGS
 
-          cat > android-client/build.gradle <<'EOF'
-// Top-level build file placeholder
-buildscript {
-  ext.kotlin_version = '1.9.10'
-  repositories { google(); mavenCentral() }
-}
-EOF
-
-          cat > android-client/app/src/main/AndroidManifest.xml <<'EOF'
-<?xml version="1.0" encoding="utf-8"?>
-<manifest package="com.winshop.musicclient"
-    xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.INTERNET" />
-    <application android:allowBackup="true" android:label="music-client" >
-        <activity android:name=".MainActivity" android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-        <service android:name=".player.PlayerService" android:exported="false" />
-    </application>
-</manifest>
-EOF
-
-          cat > android-client/app/src/main/java/com/winshop/musicclient/MainActivity.kt <<'EOF'
+          cat > android-client/app/src/main/java/com/winshop/musicclient/MainActivity.kt <<'ACT'
 package com.winshop.musicclient
 
 import android.os.Bundle
@@ -167,30 +133,14 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AppRoot() { Text("Music Client (skeleton)") }
-EOF
+ACT
 
-          cat > android-client/app/src/main/java/com/winshop/musicclient/player/PlayerService.kt <<'EOF'
-package com.winshop.musicclient.player
-
-import android.app.Service
-import android.content.Intent
-import android.os.IBinder
-import com.google.android.exoplayer2.SimpleExoPlayer
-
-class PlayerService : Service() {
-  private var player: SimpleExoPlayer? = null
-  override fun onCreate() { super.onCreate(); player = SimpleExoPlayer.Builder(this).build() }
-  override fun onDestroy() { player?.release(); player = null; super.onDestroy() }
-  override fun onBind(intent: Intent?): IBinder? = null
-}
-EOF
-
-          # Commit & push to branch
+          # commit & push
           git add .
-          git commit -m "Init: add skeleton files (via workflow)" || echo "No changes to commit"
+          git commit -m "Init: add skeleton files (via workflow)" || true
           git push origin $BRANCH --force
 
-      - name: Show result
+      - name: Show branches
         run: |
-          echo "Branch pushed (if created). List branches below:"
+          echo "Branches on origin:"
           git ls-remote --heads origin

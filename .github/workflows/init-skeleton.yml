@@ -1,4 +1,4 @@
-name: Init skeleton
+name: Initialize Skeleton
 
 on:
   workflow_dispatch:
@@ -7,95 +7,131 @@ permissions:
   contents: write
 
 jobs:
-  init:
+  init-skeleton:
     runs-on: ubuntu-latest
     steps:
-      - name: Create branch and seed files (via github-script)
-        uses: actions/github-script@v6
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          github-token: ${{ secrets.SKELETON_PAT }}
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const branch = 'init-skeleton';
+          fetch-depth: 0
+          persist-credentials: true
 
-            // Ensure default branch SHA
-            const { data: repoData } = await github.rest.repos.get({ owner, repo });
-            const defaultBranch = repoData.default_branch;
-            const { data: refData } = await github.rest.git.getRef({ owner, repo, ref: `heads/${defaultBranch}` });
-            const baseSha = refData.object.sha;
+      - name: Configure Git and Create Skeleton
+        run: |
+          set -euo pipefail
 
-            // Create branch if not exists
-            try {
-              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: baseSha });
-              core = console;
-              console.log(`Created branch ${branch}`);
-            } catch (e) {
-              if (e.status === 422) {
-                console.log(`Branch ${branch} already exists`);
-              } else {
-                throw e;
-              }
-            }
+          # Настройка Git-инфтерфейса для коммита от лица GitHub Actions Bot
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-            // Files to add to branch
-            const files = [
-              {
-                path: 'README.md',
-                content: `# music-client
+          # Корректное определение дефолтной ветки репозитория
+          DEFAULT_BRANCH=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|origin/||' || echo "main")
+          
+          # Переключение/создание ветки init-skeleton на основе дефолтной (или текущей локальной)
+          git checkout -B init-skeleton "origin/$DEFAULT_BRANCH" || git checkout -B init-skeleton
+
+          # Создание необходимых директорий
+          mkdir -p .github/workflows
+          mkdir -p android-client/app/src/main/java/com/winshop/musicclient
+
+          # Генерация README.md
+          cat << 'EOF' > README.md
+# music-client
 
 Этот репозиторий содержит начальный скелет Android‑клиента для личных треков и инструкции.
 - Хранение аудио: рекомендуется Git LFS.
-- Загрузка: из клиента напрямую в ветку "tracks" (через GitHub API).
+- Загрузка: клиент загружает треки в ветку `tracks` через GitHub API.
 - Лицензия: MIT
-`
-              },
-              {
-                path: '.gitattributes',
-                content: `*.mp3 filter=lfs diff=lfs merge=lfs -text
+EOF
+
+          # Генерация .gitattributes
+          cat << 'EOF' > .gitattributes
+*.mp3 filter=lfs diff=lfs merge=lfs -text
 *.wav filter=lfs diff=lfs merge=lfs -text
-`
-              }
-            ];
+EOF
 
-            // Helper: create or update file in the target branch
-            for (const file of files) {
-              const contentBase64 = Buffer.from(file.content, 'utf8').toString('base64');
-              try {
-                // check if file exists on the branch
-                const existing = await github.rest.repos.getContent({
-                  owner,
-                  repo,
-                  path: file.path,
-                  ref: branch
-                });
-                // update
-                await github.rest.repos.createOrUpdateFileContents({
-                  owner,
-                  repo,
-                  path: file.path,
-                  message: `Init: add ${file.path}`,
-                  content: contentBase64,
-                  branch,
-                  sha: existing.data.sha
-                });
-                console.log(`Updated ${file.path} on ${branch}`);
-              } catch (err) {
-                if (err.status === 404) {
-                  // create
-                  await github.rest.repos.createOrUpdateFileContents({
-                    owner,
-                    repo,
-                    path: file.path,
-                    message: `Init: add ${file.path}`,
-                    content: contentBase64,
-                    branch
-                  });
-                  console.log(`Created ${file.path} on ${branch}`);
-                } else {
-                  throw err;
-                }
-              }
-            }
+          # Генерация .lfsconfig с использованием переменной окружения рантайма (без конфликтов с синтаксисом GitHub Actions)
+          cat << EOF > .lfsconfig
+[lfs]
+    url = https://github.com/${GITHUB_REPOSITORY}.git/info/lfs
+EOF
 
-            console.log('Seed files done.');
+          # Генерация минимального .gitignore для Android/Gradle
+          cat << 'EOF' > .gitignore
+.gradle/
+build/
+capture/
+*.apk
+*.iml
+.idea/
+local.properties
+.DS_Store
+EOF
+
+          # Генерация независимого android-ci.yml (не падает, если папка пуста)
+          cat << 'EOF' > .github/workflows/android-ci.yml
+name: Android CI
+
+on:
+  push:
+    branches:
+      - main
+      - init-skeleton
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Build with Gradle
+        run: |
+          if [ -d "android-client" ]; then
+            cd android-client
+            if [ -f "gradlew" ]; then
+              chmod +x gradlew
+              ./gradlew assembleDebug
+            else
+              echo "gradlew not found, skipping build."
+            fi
+          else
+            echo "android-client directory not found, skipping build."
+          fi
+EOF
+
+          # Генерация settings.gradle
+          cat << 'EOF' > android-client/settings.gradle
+rootProject.name = "music-client"
+include ":app"
+EOF
+
+          # Генерация MainActivity.kt (базовый рабочий Compose-шаблон)
+          cat << 'EOF' > android-client/app/src/main/java/com/winshop/musicclient/MainActivity.kt
+package com.winshop.musicclient
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.material3.Text
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            Text(text = "Music Client Skeleton")
+        }
+    }
+}
+EOF
+
+          # Индексация, создание коммита и принудительный пуш в ветку init-skeleton
+          git add README.md .gitattributes .lfsconfig .gitignore .github/workflows/android-ci.yml android-client/
+          git commit -m "Init: add skeleton files (via workflow)"
+          git push origin HEAD:init-skeleton --force
+
+          # Вывод списка удаленных веток для проверки
+          git ls-remote --heads origin

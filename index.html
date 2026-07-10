@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Music Client</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --card-color: #1e1e1e;
+            --accent-color: #1db954;
+            --text-color: #ffffff;
+            --text-muted: #b3b3b3;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .player-card {
+            background: var(--card-color);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+            box-sizing: border-box;
+        }
+        .track-title { font-size: 1.4rem; font-weight: bold; margin-bottom: 5px; }
+        .track-artist { font-size: 1rem; color: var(--text-muted); margin-bottom: 20px; }
+        audio { width: 100%; margin-top: 10px; border-radius: 8px; }
+        .playlist {
+            margin-top: 25px;
+            width: 100%;
+            max-width: 400px;
+            background: var(--card-color);
+            border-radius: 15px;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        .playlist-item {
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            justify-content: space-between;
+        }
+        .playlist-item:hover { background: #2a2a2a; }
+        .playlist-item.active { color: var(--accent-color); font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="player-card">
+        <div class="track-title" id="current-title">Выбери трек</div>
+        <div class="track-artist" id="current-artist">Из списка ниже</div>
+        <audio id="audio-player" controls></audio>
+    </div>
+
+    <div class="playlist" id="playlist-container">
+        <!-- Треки прилетят сюда из JSON -->
+    </div>
+
+    <script>
+        const player = document.getElementById('audio-player');
+        const titleEl = document.getElementById('current-title');
+        const artistEl = document.getElementById('current-artist');
+        const playlistContainer = document.getElementById('playlist-container');
+
+        let tracks = [];
+        let currentTrackIndex = 0;
+
+        async function loadPlaylist() {
+            try {
+                const response = await fetch('playlist.json');
+                tracks = await response.json();
+                renderPlaylist();
+            } catch (e) {
+                titleEl.innerText = "Ошибка загрузки плейлиста";
+            }
+        }
+
+        function renderPlaylist() {
+            playlistContainer.innerHTML = '';
+            tracks.forEach((track, index) => {
+                const item = document.createElement('div');
+                item.className = 'playlist-item';
+                if (index === currentTrackIndex && !player.paused) item.classList.add('active');
+                item.innerHTML = `<span>${track.title}</span><span style="color:gray">${track.artist}</span>`;
+                item.onclick = () => playTrack(index);
+                playlistContainer.appendChild(item);
+            });
+        }
+
+        function playTrack(index) {
+            currentTrackIndex = index;
+            const track = tracks[index];
+            titleEl.innerText = track.title;
+            artistEl.innerText = track.artist;
+            player.src = track.url;
+            player.play();
+            renderPlaylist();
+        }
+
+        player.onended = () => {
+            if (currentTrackIndex + 1 < tracks.length) {
+                playTrack(currentTrackIndex + 1);
+            }
+        };
+
+        loadPlaylist();
+    </script>
+</body>
+</html>

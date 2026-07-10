@@ -9,136 +9,93 @@ permissions:
 jobs:
   init:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout using PAT
-        uses: actions/checkout@v4
+      - name: Create branch and seed files (via github-script)
+        uses: actions/github-script@v6
         with:
-          token: ${{ secrets.SKELETON_PAT }}
-          fetch-depth: 0
+          github-token: ${{ secrets.SKELETON_PAT }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = 'init-skeleton';
 
-      - name: Configure git user
-        run: |
-          git config user.name "skeleton-bot"
-          git config user.email "skeleton-bot@users.noreply.github.com"
+            // Ensure default branch SHA
+            const { data: repoData } = await github.rest.repos.get({ owner, repo });
+            const defaultBranch = repoData.default_branch;
+            const { data: refData } = await github.rest.git.getRef({ owner, repo, ref: `heads/${defaultBranch}` });
+            const baseSha = refData.object.sha;
 
-      - name: Create branch and add files
-        env:
-          BRANCH: init-skeleton
-          REPO: ${{ github.repository }}
-        run: |
-          set -e
+            // Create branch if not exists
+            try {
+              await github.rest.git.createRef({ owner, repo, ref: `refs/heads/${branch}`, sha: baseSha });
+              core = console;
+              console.log(`Created branch ${branch}`);
+            } catch (e) {
+              if (e.status === 422) {
+                console.log(`Branch ${branch} already exists`);
+              } else {
+                throw e;
+              }
+            }
 
-          # Fetch main if present
-          git fetch origin main:refs/remotes/origin/main || true
-
-          # Create or reset local branch from origin/main (or from current HEAD)
-          if git show-ref --verify --quiet refs/heads/$BRANCH; then
-            git branch -D $BRANCH || true
-          fi
-
-          if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
-            git checkout -b $BRANCH origin/main || git checkout -b $BRANCH
-          else
-            git checkout -b $BRANCH
-          fi
-
-          # README
-          cat > README.md <<'README'
-# music-client
+            // Files to add to branch
+            const files = [
+              {
+                path: 'README.md',
+                content: `# music-client
 
 Этот репозиторий содержит начальный скелет Android‑клиента для личных треков и инструкции.
 - Хранение аудио: рекомендуется Git LFS.
-- Загрузка: из клиента напрямую в ветку `tracks` (через GitHub API).
+- Загрузка: из клиента напрямую в ветку "tracks" (через GitHub API).
 - Лицензия: MIT
-README
-
-          # .gitattributes
-          cat > .gitattributes <<'ATTR'
-*.mp3 filter=lfs diff=lfs merge=lfs -text
+`
+              },
+              {
+                path: '.gitattributes',
+                content: `*.mp3 filter=lfs diff=lfs merge=lfs -text
 *.wav filter=lfs diff=lfs merge=lfs -text
-ATTR
+`
+              }
+            ];
 
-          # .lfsconfig (uses GITHUB_REPOSITORY)
-          cat > .lfsconfig <<'LFS'
-[lfs]
-    url = https://github.com/${REPO}.git/info/lfs
-LFS
+            // Helper: create or update file in the target branch
+            for (const file of files) {
+              const contentBase64 = Buffer.from(file.content, 'utf8').toString('base64');
+              try {
+                // check if file exists on the branch
+                const existing = await github.rest.repos.getContent({
+                  owner,
+                  repo,
+                  path: file.path,
+                  ref: branch
+                });
+                // update
+                await github.rest.repos.createOrUpdateFileContents({
+                  owner,
+                  repo,
+                  path: file.path,
+                  message: `Init: add ${file.path}`,
+                  content: contentBase64,
+                  branch,
+                  sha: existing.data.sha
+                });
+                console.log(`Updated ${file.path} on ${branch}`);
+              } catch (err) {
+                if (err.status === 404) {
+                  // create
+                  await github.rest.repos.createOrUpdateFileContents({
+                    owner,
+                    repo,
+                    path: file.path,
+                    message: `Init: add ${file.path}`,
+                    content: contentBase64,
+                    branch
+                  });
+                  console.log(`Created ${file.path} on ${branch}`);
+                } else {
+                  throw err;
+                }
+              }
+            }
 
-          # .gitignore
-          cat > .gitignore <<'GITIGNORE'
-.gradle/
-build/
-**/build/
-.idea/
-*.iml
-local.properties
-*.jks
-*.log
-GITIGNORE
-
-          # Minimal android CI workflow (will be present on init-skeleton branch)
-          mkdir -p .github/workflows
-          cat > .github/workflows/android-ci.yml <<'CI'
-name: Android CI
-
-on:
-  push:
-    branches: [ main, init-skeleton ]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-      - name: Build (if android-client present)
-        run: |
-          if [ -d android-client ] && [ -f android-client/gradlew ]; then
-            cd android-client
-            ./gradlew assembleDebug --no-daemon
-          else
-            echo "No android-client present yet."
-          fi
-CI
-
-          # Minimal android-client skeleton (small safe files)
-          mkdir -p android-client/app/src/main/java/com/winshop/musicclient
-          cat > android-client/settings.gradle <<'SET'
-rootProject.name = "music-client"
-include ":app"
-SET
-
-          cat > android-client/app/src/main/java/com/winshop/musicclient/MainActivity.kt <<'ACT'
-package com.winshop.musicclient
-
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.material.Text
-import androidx.compose.runtime.Composable
-
-class MainActivity : ComponentActivity() {
-  override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
-    setContent { AppRoot() }
-  }
-}
-
-@Composable
-fun AppRoot() { Text("Music Client (skeleton)") }
-ACT
-
-          # commit and push
-          git add .
-          git commit -m "Init: add skeleton files (via workflow)" || true
-          git push origin $BRANCH --force
-
-      - name: Show pushed branches
-        run: |
-          echo "Remote branches:"
-          git ls-remote --heads origin
+            console.log('Seed files done.');

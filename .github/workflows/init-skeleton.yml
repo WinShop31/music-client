@@ -9,6 +9,7 @@ permissions:
 jobs:
   init:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout using PAT
         uses: actions/checkout@v4
@@ -28,13 +29,14 @@ jobs:
         run: |
           set -e
 
-          # fetch main (if exists)
+          # Fetch main if present
           git fetch origin main:refs/remotes/origin/main || true
 
-          # create/reset branch from origin/main (or from current HEAD)
+          # Create or reset local branch from origin/main (or from current HEAD)
           if git show-ref --verify --quiet refs/heads/$BRANCH; then
             git branch -D $BRANCH || true
           fi
+
           if git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
             git checkout -b $BRANCH origin/main || git checkout -b $BRANCH
           else
@@ -45,14 +47,10 @@ jobs:
           cat > README.md <<'README'
 # music-client
 
-Этот репозиторий содержит начальный скелет Android‑клиента для платформы личных треков и минимальные инструкции для загрузки треков напрямую в репозиторий через GitHub API.
-
-Коротко:
-- Хранение аудио: Git LFS (рекомендуется). GitHub запрещает файлы >100MB.
-- Загрузка: из приложения напрямую в репозиторий через GitHub API (Personal Access Token / OAuth token).
-- В приложении используется одна ветка для треков: "tracks".
-
-Лицензия: MIT
+Этот репозиторий содержит начальный скелет Android‑клиента для личных треков и инструкции.
+- Хранение аудио: рекомендуется Git LFS.
+- Загрузка: из клиента напрямую в ветку `tracks` (через GitHub API).
+- Лицензия: MIT
 README
 
           # .gitattributes
@@ -61,8 +59,8 @@ README
 *.wav filter=lfs diff=lfs merge=lfs -text
 ATTR
 
-          # .lfsconfig (uses repo env)
-          cat > .lfsconfig <<LFS
+          # .lfsconfig (uses GITHUB_REPOSITORY)
+          cat > .lfsconfig <<'LFS'
 [lfs]
     url = https://github.com/${REPO}.git/info/lfs
 LFS
@@ -79,7 +77,7 @@ local.properties
 *.log
 GITIGNORE
 
-          # Minimal android CI workflow
+          # Minimal android CI workflow (will be present on init-skeleton branch)
           mkdir -p .github/workflows
           cat > .github/workflows/android-ci.yml <<'CI'
 name: Android CI
@@ -104,16 +102,16 @@ jobs:
             cd android-client
             ./gradlew assembleDebug --no-daemon
           else
-            echo "No android-client found."
+            echo "No android-client present yet."
           fi
 CI
 
-          # Minimal android-client skeleton (small files)
+          # Minimal android-client skeleton (small safe files)
           mkdir -p android-client/app/src/main/java/com/winshop/musicclient
-          cat > android-client/settings.gradle <<'SETTINGS'
+          cat > android-client/settings.gradle <<'SET'
 rootProject.name = "music-client"
 include ":app"
-SETTINGS
+SET
 
           cat > android-client/app/src/main/java/com/winshop/musicclient/MainActivity.kt <<'ACT'
 package com.winshop.musicclient
@@ -135,12 +133,12 @@ class MainActivity : ComponentActivity() {
 fun AppRoot() { Text("Music Client (skeleton)") }
 ACT
 
-          # commit & push
+          # commit and push
           git add .
           git commit -m "Init: add skeleton files (via workflow)" || true
           git push origin $BRANCH --force
 
-      - name: Show branches
+      - name: Show pushed branches
         run: |
-          echo "Branches on origin:"
+          echo "Remote branches:"
           git ls-remote --heads origin
